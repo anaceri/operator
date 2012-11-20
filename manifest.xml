@@ -1,0 +1,18 @@
+<package>
+  <description brief="operator">
+
+     operator
+
+  </description>
+  <author>Burak Cizmeci</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/LMT/teleoperation/operator</url>
+  <depend package="rospy"/>
+  <depend package="roscpp"/>
+  <depend package="std_msgs"/>	
+
+
+</package>
+
+
