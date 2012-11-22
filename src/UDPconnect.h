@@ -124,7 +124,7 @@ int initNetwork(UDPSTRUCT* SocketPtr){
 	       return -1;
 	}
 	
-	fcntl(SocketPtr->SendSock, F_SETFL, O_NONBLOCK); // set to non-blocking mode
+	fcntl(SocketPtr->ListenSock, F_SETFL, O_NONBLOCK); // set to non-blocking mode
 
 	SocketPtr->fromlen = sizeof(struct sockaddr_in);
 	
@@ -203,13 +203,13 @@ void ParseCommand(ROBOTCOMMAND *RobotPtr,char* DataBuffer, int BufferSize) {
 
 void PrepareCommand(ROBOTCOMMAND *RobotPtr,char* DataBuffer, int* BufferSize,char CommandType) {
 
-
+		
 	switch(CommandType) {
 		
 		// Velocity command packet
 		case 'V':
 			*BufferSize = 3*sizeof(double)+sizeof(char);
-			DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
+			//DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
 			memcpy(&(DataBuffer[0]),&(CommandType),sizeof(char));
 			memcpy(&(DataBuffer[sizeof(char)]),&(RobotPtr->Velocity[0]),3*sizeof(double));
 		break;
@@ -217,7 +217,7 @@ void PrepareCommand(ROBOTCOMMAND *RobotPtr,char* DataBuffer, int* BufferSize,cha
 		// Quaternion command packet
 		case 'Q':
 			*BufferSize = 4*sizeof(double)+sizeof(char);
-			DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
+			//DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
 			memcpy(&(DataBuffer[0]),&(CommandType),sizeof(char));
 			memcpy(&(DataBuffer[sizeof(char)]),&(RobotPtr->Quaternion[0]),4*sizeof(double));
 		break;
@@ -225,7 +225,7 @@ void PrepareCommand(ROBOTCOMMAND *RobotPtr,char* DataBuffer, int* BufferSize,cha
 		// Poisition command packet
 		case 'P':
 			*BufferSize = 3*sizeof(double)+sizeof(char);
-			DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
+			//DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
 			memcpy(&(DataBuffer[0]),&(CommandType),sizeof(char));
 			memcpy(&(DataBuffer[sizeof(char)]),&(RobotPtr->Position[0]),3*sizeof(double));
 		break;
@@ -233,7 +233,7 @@ void PrepareCommand(ROBOTCOMMAND *RobotPtr,char* DataBuffer, int* BufferSize,cha
 		// Force Feedback packet
 		case 'F':
 			*BufferSize = 3*sizeof(double)+sizeof(char);
-			DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
+			//DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
 			memcpy(&(DataBuffer[0]),&(CommandType),sizeof(char));
 			memcpy(&(DataBuffer[sizeof(char)]),&(RobotPtr->GlobalForce[0]),3*sizeof(double));
 		break;
@@ -241,7 +241,7 @@ void PrepareCommand(ROBOTCOMMAND *RobotPtr,char* DataBuffer, int* BufferSize,cha
 		// Torque packet
 		case 'T':
 			*BufferSize = 3*sizeof(double)+sizeof(char);
-			DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
+			//DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
 			memcpy(&(DataBuffer[0]),&(CommandType),sizeof(char));
 			memcpy(&(DataBuffer[sizeof(char)]),&(RobotPtr->Torque[0]),3*sizeof(double));
 		break;
@@ -250,7 +250,7 @@ void PrepareCommand(ROBOTCOMMAND *RobotPtr,char* DataBuffer, int* BufferSize,cha
 		case 'A':
 
 			*BufferSize = 16*sizeof(double)+sizeof(char); // Gripper related data is missing here!
-			DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
+			//DataBuffer = (char*)malloc(sizeof(char)*(*BufferSize));
 			memcpy(&(DataBuffer[0]),&(CommandType),sizeof(char));
 			memcpy(&(DataBuffer[sizeof(char)]),&(RobotPtr->Velocity[0]),3*sizeof(double));
 			memcpy(&(DataBuffer[sizeof(char)+3*sizeof(double)]),&(RobotPtr->Position[0]),3*sizeof(double));

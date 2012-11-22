@@ -44,7 +44,7 @@
  * Authors: Burak Cizmeci 
  * e-mail: burak.cizmeci@tum.de 
  *
- * Version 08 November 2012 
+ * Version 22 November 2012 
  */
 
 #include <iostream>
@@ -67,7 +67,6 @@ using namespace std;
 
 //----ROS include----
 #include "ros/ros.h"
-#include "std_msgs/String.h"
 
 #include "controlfunctions.h" // filters and control related functions
 #include "UDPconnect.h"
@@ -122,7 +121,7 @@ double GripSpeedPredErrVar = 0; // required for Kalman filtering of gripping spe
 double SigmaGripperForce;
 double KUKAForce[3];
 
-/*********************************************************************/
+/********************************************************************/
 
 /**************** UDP communication variables ***********************
 ********************************************************************/
@@ -130,16 +129,16 @@ double KUKAForce[3];
 #define VIDLOCPORT 65540
 #define VIDRMPORT 65541
 #define VIDPCIP "10.152.4.41"
-UDPSTRUCT* VidSockPtr;
+UDPSTRUCT* VidSockPtr; // Send video stream to the video decoder
 
 #define TOPPCIP "10.152.4.76"
-#define OPLOCPORT 65537
-#define TOPRMPORT 65536
-UDPSTRUCT* TopSockPtr;
+#define OPLOCPORT 9091
+#define TOPRMPORT 9090
+UDPSTRUCT* TopSockPtr; // Send Commands and Receive Force Feedback
 
-#define OPVIDLOCPORT 9091
-#define TOPVIDRMPORT 9090
-UDPSTRUCT* TopVidSockPtr;
+#define OPVIDLOCPORT 9081
+#define TOPVIDRMPORT 9080
+UDPSTRUCT* TopVidSockPtr; // Receive video from the teleoperator
 
 /*******************************************************************/
 
@@ -153,85 +152,92 @@ ros::Subscriber* sub;
 void HapticsLoop(const ros::TimerEvent&){
 
 // Haptic Signal Processing and control related processing
-char ListenBuffer[DEFAULT_BUFFERSIZE];
-int iReadBytes;
-int flags = 0;	
-char* CommandBuffer;
-int CommandBufferSize;
+char ListenBuffer[DEFAULT_BUFFERSIZE]; // buffer holding the incoming force packets
+int iReadBytes; // how many bytes read	
+char SendBuffer[DEFAULT_BUFFERSIZE]; // array to packetize the command data
+int SendBufferSize; // how many bytes has been written into SendBuffer
 
-	
+
+
+/*	
 	//! Listen the force/torque packets coming from operator side
 	iReadBytes = recvfrom(TopSockPtr->ListenSock, &ListenBuffer, sizeof(ListenBuffer), 0, (struct sockaddr *) &(TopSockPtr->sockLocal), &(TopSockPtr->fromlen));
+	 cout << "iReadBytes =  " << iReadBytes << endl;
 
 	if (iReadBytes>0) {
 
 	     //! Parse the command coming from the operator	
-	     ParseCommand(KUKACommandPtr,ListenBuffer, iReadBytes);
+//	     ParseCommand(KUKACommandPtr,ListenBuffer, iReadBytes);
+	     cout << "iReadBytes =  " << iReadBytes << endl;
  
 	}
 	
-	
+*/	
 	//! if the control type is velocity
 	if (KUKACommandPtr->ControlType == 'V') {
 		
 		//! Get the Velocity and gripping positions from the haptic device
 		dhdGetLinearVelocity(&KUKACommandPtr->Velocity[0],&KUKACommandPtr->Velocity[1],&KUKACommandPtr->Velocity[2],dhdGetDeviceID());
 
+	   /*
+		cout << "Debug: Vx =  " << KUKACommandPtr->Velocity[0] << endl;
+		cout << "Debug: Vy =  " << KUKACommandPtr->Velocity[1] << endl;
+		cout << "Debug: Vz =  " << KUKACommandPtr->Velocity[2] << endl;
+           */
 		//! TODO Apply compression on command & control architecture code comes here
 		 
-		//! Send the command to the remote side
-		PrepareCommand(KUKACommandPtr,CommandBuffer, &CommandBufferSize,KUKACommandPtr->ControlType);
-
-		if (CommandBufferSize >0)
-		   sendto(TopSockPtr->SendSock, &(CommandBuffer[0]), CommandBufferSize, 0, (const struct sockaddr *)&(TopSockPtr->sockRemote), TopSockPtr->fromlen);
+		//! Packetize the command 
+		PrepareCommand(KUKACommandPtr,&(SendBuffer[0]), &SendBufferSize,KUKACommandPtr->ControlType);
 		
-		free(&CommandBuffer);
+		//! Send the command to the remote side
+		if (SendBufferSize >0) {
+		   sendto(TopSockPtr->SendSock, &(SendBuffer[0]), SendBufferSize, 0, (const struct sockaddr *)&(TopSockPtr->sockRemote), TopSockPtr->fromlen);
+			
+		}
 		
 		
 		//! Display forces to the haptic device
 	  	
 		// apply all forces at once
     		//dhdSetForceAndGripperForce (force.x, force.y, force.z, gripperForce);
-		dhdSetForceAndGripperForce (KUKACommandPtr->GlobalForce[0], KUKACommandPtr->GlobalForce[1], KUKACommandPtr->GlobalForce[2], 0);
+		//dhdSetForceAndGripperForce (KUKACommandPtr->GlobalForce[0], KUKACommandPtr->GlobalForce[1], KUKACommandPtr->GlobalForce[2], 0);
 
 
 	    
-	}
+	} // end of control type
 
 	
-}
+} // end of haptics loop
 
 
 /************ ListenVideo Thread *****************************/
-//! Listens video from the video encoding PC
+//! Listens video from the teleoperator PC
 void ListenVideo(const ros::TimerEvent&){
 	
-	char ListenBuffer[DEFAULT_BUFFERSIZE];
-	int iReadBytes;
-	int flags = 0;
-
+	char ListenBuffer[DEFAULT_BUFFERSIZE]; // video listen buffer
+	int iReadBytes; // how many bytes received
+	
+	//! receive from the teleoperator PC
 	iReadBytes = recvfrom(TopVidSockPtr->ListenSock, &ListenBuffer, sizeof(ListenBuffer), 0, (struct sockaddr *) &(TopVidSockPtr->sockLocal), &(TopVidSockPtr->fromlen));
 	
 	if (iReadBytes>0) {
 		
-	//	cout << " ReadBytes =  " << iReadBytes << endl;
-	//	cout << "<Debug>teleoperator.cpp.118: Video Packet received! " << endl;
-
 		//send video to the decoding PC
 		sendto(VidSockPtr->SendSock, &(ListenBuffer[0]), iReadBytes, 0, (const struct sockaddr *)&(VidSockPtr->sockRemote), VidSockPtr->fromlen);
-
 
 
 	}
 
 
-}
+} // end of listen video
 /*************************************************************/
 
 /***************** ListenTimeStamp thread ********************/
 void ListenTimeStamp(const ros::TimerEvent&) {
 
 	// TODO A dummy machine constantly send time stamps to all PCs to measure the signal delays
+
+	
 	// Dont forget critical sections for this part
 
 }
@@ -241,10 +247,11 @@ void ListenTimeStamp(const ros::TimerEvent&) {
 /********************* StartTeleoperation() *******************/
 void StartTeleoperation () {
 
-
+  // Set the gravity compensation on the haptic device for safety reasons
   dhdSetStandardGravity(9.81);
   dhdSetGravityCompensation(DHD_ON,dhdGetDeviceID());
 
+/* 22.11.2012 Burak: The below code may be needed to program the gripper
    //! initialize buffers
    GripperWidthBuffer = (double*) malloc(BufferSize*sizeof(double)); 
    GripperSpeedBuffer = (double*) malloc(BufferSize*sizeof(double)); 
@@ -256,8 +263,10 @@ void StartTeleoperation () {
 		
 	}
 	
-
-        // UDP port initialization for Video stream
+*/
+        // UDP port initialization for Video stream to decode video on the decoder PC
+	
+	// initialize the udp communication structure
 	VidSockPtr = new UDPSTRUCT;
 	VidSockPtr->localport = VIDLOCPORT;
 	VidSockPtr->remoteport = VIDRMPORT;
@@ -274,6 +283,8 @@ void StartTeleoperation () {
 	}
 
 	// UDP port initialization for operator-teleoperator haptic communication
+	
+	// initialize the udp communication structure
 	TopSockPtr = new UDPSTRUCT;
 	TopSockPtr->localport = OPLOCPORT;
 	TopSockPtr->remoteport = TOPRMPORT;
@@ -290,6 +301,8 @@ void StartTeleoperation () {
 	}
 
         // UDP port initialization for operator-teleoperator video communication
+
+	// initialize the udp communication structure
 	TopVidSockPtr = new UDPSTRUCT;
 	TopVidSockPtr->localport = OPVIDLOCPORT;
 	TopVidSockPtr->remoteport = TOPVIDRMPORT;
@@ -307,24 +320,26 @@ void StartTeleoperation () {
 
 	// initialize KUKA command data structure pointer 
 	KUKACommandPtr = new ROBOTCOMMAND;
-
+	KUKACommandPtr->ControlType = 'V'; // this sets to velocity commanding
 
 	// TODO Session initiation function shoul be called here
 	// the haptic device type, the communication delay measure and any necessary information share should be done before the session starts
 	if (SessionInitiation(TopSockPtr, VidSockPtr,KUKACommandPtr)) // this function was not implemented yet
         {
 
-		cout << "Teleoperation session is successfully initilized " << endl;
+		cout << "Teleoperation session is successfully initialized " << endl;
 		
 	} else {
 
 		cout << "Failed to initialize Teleoperation session " << endl;		
 
 	}
-	//! 10.11.2012 Burak: The below code provides ROS timercallback
-        //! 10.11.2012 Burak: They have different operating frequencies that's why we have separate loops
-	// create a 1 kHz haptic loop
-//	TimerHaptic = n->createTimer(ros::Duration(TimerPeriodHaptic), HapticsLoop);
+	
+
+	//! Timer callback initializations
+
+	// create a timer callback for haptics loop with a prespecified frequency
+	TimerHaptic = n->createTimer(ros::Duration(TimerPeriodHaptic), HapticsLoop);
 	// create a video listener
 	TimerVideo  = n->createTimer(ros::Duration(TimerPeriodVideo), ListenVideo); 
 	// create a time listener
@@ -332,15 +347,9 @@ void StartTeleoperation () {
 
 	// Start threads!
 
-//	while(ros::ok()) {
-	ros::spin();
+ 	ros::spin();
 
-//	}
- 
-
-	
-
-}
+} // end of Start teleoperation
 /*************************************************************/
 
 
@@ -357,22 +366,8 @@ void StopTeleoperation () {
 }
 /*************************************************************/
 
-/************** InitROS() ************************************/
-//ROS initialize function
-int InitROS(int argc, char** argv)
-{
-    ros::init(argc, argv, "operator");
-    n = new ros::NodeHandle;
-    n1 = new ros::NodeHandle;
-    ros::Rate loop_rate(10);
-    chatter_pub = new ros::Publisher;
-    sub = new ros::Subscriber;
-   
 
-}
-/*************************************************************/
-
-// haptic devices initialization
+// haptic device initialization
 int InitHaptics () {
 
   if (dhdOpen () >= 0) {
@@ -433,7 +428,7 @@ int InitHaptics () {
 
 
 /************************* main() *****************************/
-int main (int   argc, char *argv[])
+int main (int   argc, char **argv)
 {
   cout << endl;
   cout << "Force Dimension - KUKA LWR Teleoperation " << endl;
@@ -441,15 +436,18 @@ int main (int   argc, char *argv[])
   cout << "Author: Burak Cizmeci"<< endl;
   cout << "All Rights Reserved." << endl << endl;
 
-  //initialize ROS
-  int InitSuccess = InitROS(argc, argv);
 
   // initialize haptic devices
   InitHaptics ();
 
+  //initialize ROS
+     ros::init(argc, argv, "operator");
+     n = new ros::NodeHandle;
+
   // Start teleoperation
   StartTeleoperation ();
-  
+
+
   // Stop teleoperation
   StopTeleoperation();
 	
