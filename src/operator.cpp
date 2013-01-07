@@ -1,3 +1,14 @@
+/**
+*	@file operator.cpp
+*	@brief This file contains the code for the operator side control
+*	of the KUKA LWR - Force Dimension teleoperation set-up
+*	@author Burak Cizmeci
+*	@date 22/11/2012
+*
+*
+*/
+
+
 /*********************** OPERATOR ROS NODE **********************************
  * Software License Agreement (BSD License)                                *
  *                                                                         *
@@ -54,7 +65,7 @@
 using namespace std;
 
 
-// includes related to FD haptic device
+/// includes related to FD haptic device
 #include "dhdc.h"
 #include "drdc.h"
 #include "CConstants.h"
@@ -62,13 +73,13 @@ using namespace std;
 #include "CMatrix3d.h"
 #include "CVector3d.h"
 
-#define REFRESH_INTERVAL  0.1   // sec
+#define REFRESH_INTERVAL  0.1 
 #define _USE_MATH_DEFINES
 
-//----ROS include----
+///----ROS include----
 #include "ros/ros.h"
 
-#include "controlfunctions.h" // filters and control related functions
+#include "controlfunctions.h" ///filters and control related functions
 #include "UDPconnect.h"
 
 
@@ -77,20 +88,46 @@ using namespace std;
 ros::Timer TimerHaptic;
 ros::Timer TimerVideo;
 ros::Timer TimerStamp;
-// Settings for timers and discrete derivatives
+///Settings for timers and discrete derivatives
 double TimerPeriodHaptic = 0.001; // seconds 1/T Hz
 double TimerPeriodVideo = 0.02; // seconds 1/T Hz
 double TimerPeriodStamp = 0.001; // seconds 1/T Hz
 
-//Thread synchronization variables are defined here
-
+///Thread synchronization variables are defined here
 pthread_mutex_t SyncGripperForce;
-//create mutex attribute variable
+///create mutex attribute variable
 pthread_mutexattr_t GripForceAttr;
 
 pthread_mutex_t SyncKUKAForce;
- //create mutex attribute variable
+///create mutex attribute variable
 pthread_mutexattr_t KUKAForceAttr;
+
+pthread_mutex_t SyncTime;
+///create mutex attribute variable
+pthread_mutexattr_t TimeAttr;
+
+/**************** UDP communication variables ***********************
+********************************************************************/
+#define DEFAULT_BUFFERSIZE (50000)
+#define VIDLOCPORT 65540
+#define VIDRMPORT 65541
+#define VIDPCIP "10.152.4.41"
+UDPSTRUCT* VidSockPtr; ///Send video stream to the video decoder
+
+#define TOPPCIP "10.152.4.76"
+#define OPLOCPORT 9091
+#define TOPRMPORT 9090
+UDPSTRUCT* TopSockPtr; ///Send Commands and Receive Force Feedback
+
+#define OPVIDLOCPORT 9081
+#define TOPVIDRMPORT 9080
+UDPSTRUCT* TopVidSockPtr; ///Receive video from the teleoperator
+
+#define TIMEPCIP "10.152.4.94"
+#define TIMELOCPORT 9071
+#define TIMERMPORT 9070
+UDPSTRUCT* TimeSrvSockPtr; ///Receive time stamps from time server
+/*******************************************************************/
 
 
 // Buraks remaining work: 
@@ -102,60 +139,48 @@ int FingerCount;
 bool HasRot;
 bool HasGrip;
 
-//Variables for gripping
+///Variables for gripping
 double* GripperWidthBuffer;
 double* GripperSpeedBuffer;
 int BufferSize = 10;
-double FDminGripPos = 0.034916; // in m
-double FDmaxGripPos = 0.061755; // in m
-double FDgripWidth = 0.026839; // in m
-double Wsg50Width = 110; // in mm (0.11 m)
+double FDminGripPos = 0.034916; ///in m
+double FDmaxGripPos = 0.061755; ///in m
+double FDgripWidth = 0.026839; ///in m
+double Wsg50Width = 110; ///in mm (0.11 m)
 
-/* IMPORTANT NOTE: FD accepts positions in meters and WSG-50 gripper accepts width length in millimeters and speed in millimeters/second  */	
+/** IMPORTANT NOTE: FD accepts positions in meters and WSG-50 gripper accepts width length in millimeters and speed in millimeters/second  */	
 
-double GrippingWidthScale = 2; // in this case the workspaces are identical and the gripper width is limited to 				FD gripper fingers
+double GrippingWidthScale = 2; ///in this case the workspaces are identical and the gripper width is limited to 				FD gripper fingers
 double GrippingSpeedScale = 2;
-double GripSpeedPredErrVar = 0; // required for Kalman filtering of gripping speed
+double GripSpeedPredErrVar = 0; ///required for Kalman filtering of gripping speed
    
-// KUKA Haptic Loop variables
+///KUKA Haptic Loop variables
 double SigmaGripperForce;
 double KUKAForce[3];
 
-/********************************************************************/
+// Timer server variables
+double CurrentTime;
 
-/**************** UDP communication variables ***********************
-********************************************************************/
-#define DEFAULT_BUFFERSIZE (50000)
-#define VIDLOCPORT 65540
-#define VIDRMPORT 65541
-#define VIDPCIP "10.152.4.41"
-UDPSTRUCT* VidSockPtr; // Send video stream to the video decoder
-
-#define TOPPCIP "10.152.4.76"
-#define OPLOCPORT 9091
-#define TOPRMPORT 9090
-UDPSTRUCT* TopSockPtr; // Send Commands and Receive Force Feedback
-
-#define OPVIDLOCPORT 9081
-#define TOPVIDRMPORT 9080
-UDPSTRUCT* TopVidSockPtr; // Receive video from the teleoperator
-
-/*******************************************************************/
-
-//for ROS node
+///ROS node variables
 ros::NodeHandle *n, *n1;
 ros::Publisher* chatter_pub;
 ros::Subscriber* sub;
 
 
-
+/**
+*	This is the main haptics loop thread operating at 1 kHz,
+*	Gets the force feedback and sends the commanding signals.
+*	@author Burak Cizmeci
+*	@param no need to give any input
+* 	@date 22/11/2012
+*/
 void HapticsLoop(const ros::TimerEvent&){
 
-// Haptic Signal Processing and control related processing
-char ListenBuffer[DEFAULT_BUFFERSIZE]; // buffer holding the incoming force packets
-int iReadBytes; // how many bytes read	
-char SendBuffer[DEFAULT_BUFFERSIZE]; // array to packetize the command data
-int SendBufferSize; // how many bytes has been written into SendBuffer
+///Haptic Signal Processing and control related processing
+char ListenBuffer[DEFAULT_BUFFERSIZE]; ///buffer holding the incoming force packets
+int iReadBytes; ///how many bytes read	
+char SendBuffer[DEFAULT_BUFFERSIZE]; ///array to packetize the command data
+int SendBufferSize; ///how many bytes has been written into SendBuffer
 
 
 
@@ -173,10 +198,10 @@ int SendBufferSize; // how many bytes has been written into SendBuffer
 	}
 	
 */	
-	//! if the control type is velocity
+	///if the control type is velocity
 	if (KUKACommandPtr->ControlType == 'V') {
 		
-		//! Get the Velocity and gripping positions from the haptic device
+		///Get the Velocity and gripping positions from the haptic device
 		dhdGetLinearVelocity(&KUKACommandPtr->Velocity[0],&KUKACommandPtr->Velocity[1],&KUKACommandPtr->Velocity[2],dhdGetDeviceID());
 
 	   /*
@@ -184,21 +209,22 @@ int SendBufferSize; // how many bytes has been written into SendBuffer
 		cout << "Debug: Vy =  " << KUKACommandPtr->Velocity[1] << endl;
 		cout << "Debug: Vz =  " << KUKACommandPtr->Velocity[2] << endl;
            */
-		//! TODO Apply compression on command & control architecture code comes here
+		///TODO Apply compression on command & control architecture code comes here
 		 
-		//! Packetize the command 
+		///Packetize the command 
 		PrepareCommand(KUKACommandPtr,&(SendBuffer[0]), &SendBufferSize,KUKACommandPtr->ControlType);
 		
-		//! Send the command to the remote side
+		///Send the command to the remote side
 		if (SendBufferSize >0) {
 		   sendto(TopSockPtr->SendSock, &(SendBuffer[0]), SendBufferSize, 0, (const struct sockaddr *)&(TopSockPtr->sockRemote), TopSockPtr->fromlen);
 			
 		}
 		
 		
-		//! Display forces to the haptic device
+		///Display forces to the haptic device
 	  	
-		// apply all forces at once
+		///apply all forces at once
+		dhdSetForceAndGripperForce (0.0, 0.0, 0.0, 0.0);
     		//dhdSetForceAndGripperForce (force.x, force.y, force.z, gripperForce);
 		//dhdSetForceAndGripperForce (KUKACommandPtr->GlobalForce[0], KUKACommandPtr->GlobalForce[1], KUKACommandPtr->GlobalForce[2], 0);
 
@@ -211,18 +237,33 @@ int SendBufferSize; // how many bytes has been written into SendBuffer
 
 
 /************ ListenVideo Thread *****************************/
-//! Listens video from the teleoperator PC
+
+/**
+*	This is the ListenVideo thread, it listens the video channel of the teleoperator through a udp port
+*	and forwards the video packet to the video decoding PC
+*	@author Burak Cizmeci
+*	@param no need to give any input
+* 	@date 22/11/2012
+*/
+
 void ListenVideo(const ros::TimerEvent&){
 	
-	char ListenBuffer[DEFAULT_BUFFERSIZE]; // video listen buffer
-	int iReadBytes; // how many bytes received
+	char ListenBuffer[DEFAULT_BUFFERSIZE]; ///video listen buffer
+	int iReadBytes; ///how many bytes received
 	
-	//! receive from the teleoperator PC
+	///receive from the teleoperator PC
 	iReadBytes = recvfrom(TopVidSockPtr->ListenSock, &ListenBuffer, sizeof(ListenBuffer), 0, (struct sockaddr *) &(TopVidSockPtr->sockLocal), &(TopVidSockPtr->fromlen));
-	
+
+	// Debug: check time sync is working
+ /*	pthread_mutex_lock (&SyncTime);
+        
+        cout <<"Current Time = " << CurrentTime << endl;
+
+        pthread_mutex_unlock (&SyncTime);
+*/	
 	if (iReadBytes>0) {
 		
-		//send video to the decoding PC
+		///send video to the decoding PC
 		sendto(VidSockPtr->SendSock, &(ListenBuffer[0]), iReadBytes, 0, (const struct sockaddr *)&(VidSockPtr->sockRemote), VidSockPtr->fromlen);
 
 
@@ -233,25 +274,53 @@ void ListenVideo(const ros::TimerEvent&){
 /*************************************************************/
 
 /***************** ListenTimeStamp thread ********************/
+/**
+*	This is the timestamp listener thread to listen a reference time 
+*	generating server to measure the media and packet delays.	
+*	@author Burak Cizmeci
+*	@param no need to give any input
+* 	@date 22/11/2012
+*/
 void ListenTimeStamp(const ros::TimerEvent&) {
 
 	// TODO A dummy machine constantly send time stamps to all PCs to measure the signal delays
+        char ListenBuffer[8]; ///video listen buffer
+	int iReadBytes; ///how many bytes received
+	
+	///receive from the teleoperator PC
+	iReadBytes = recvfrom(TimeSrvSockPtr->ListenSock, &ListenBuffer, sizeof(ListenBuffer), 0, (struct sockaddr *) &(TimeSrvSockPtr->sockLocal), &(TimeSrvSockPtr->fromlen));
+
+	pthread_mutex_lock (&SyncTime);
+        
+	if (iReadBytes>0)
+        memcpy(&CurrentTime,&(ListenBuffer[0]),sizeof(double));
+        //cout <<"Current Time = " << CurrentTime << endl;
+	
+        pthread_mutex_unlock (&SyncTime);
+	
 
 	
-	// Dont forget critical sections for this part
+	
 
 }
 /************************************************************/
 
 
 /********************* StartTeleoperation() *******************/
+
+/**
+*	This function initializes the udp connections and timer callbacks
+*	This function also starts the teleoperation session safely.
+*	@author Burak Cizmeci
+*	@param no need to give any input
+* 	@date 22/11/2012
+*/
 void StartTeleoperation () {
 
-  // Set the gravity compensation on the haptic device for safety reasons
-  dhdSetStandardGravity(9.81);
-  dhdSetGravityCompensation(DHD_ON,dhdGetDeviceID());
+  
+/** 22.11.2012 Burak: The below code may be needed to program the gripper  */
 
-/* 22.11.2012 Burak: The below code may be needed to program the gripper
+/*
    //! initialize buffers
    GripperWidthBuffer = (double*) malloc(BufferSize*sizeof(double)); 
    GripperSpeedBuffer = (double*) malloc(BufferSize*sizeof(double)); 
@@ -264,9 +333,40 @@ void StartTeleoperation () {
 	}
 	
 */
-        // UDP port initialization for Video stream to decode video on the decoder PC
+
+
+	 // Initialize thread synchronization here
+	// setup recursive mutex for mutex attribute
+	 pthread_mutexattr_settype(&TimeAttr, PTHREAD_MUTEX_RECURSIVE_NP);
+
+	 // Use the mutex attribute to create the mutex
+	 pthread_mutex_init(&SyncTime, &TimeAttr);
+
+	 // Mutex attribute can be destroy after initializing the mutex variable
+	 pthread_mutexattr_destroy(&TimeAttr);
+
+        ///UDP port initialization for Time server communication
+
+	///initialize the udp communication structure
+	TimeSrvSockPtr = new UDPSTRUCT;
+	TimeSrvSockPtr->localport = TIMELOCPORT;
+	TimeSrvSockPtr->remoteport = TIMERMPORT;
+	strcpy(TimeSrvSockPtr->RemoteHost,TIMEPCIP);
+
+	if (initNetwork(TimeSrvSockPtr) == 1) {
+
+		cout << "Teleoperator PC video communication is ready! " << endl;
+
+	} else {
+
+		cout << "Failed to initialize Teleoperator PC communication sockets! " << endl;	
+
+	}
+
+
+        ///UDP port initialization for Video stream to decode video on the decoder PC
 	
-	// initialize the udp communication structure
+	///initialize the udp communication structure
 	VidSockPtr = new UDPSTRUCT;
 	VidSockPtr->localport = VIDLOCPORT;
 	VidSockPtr->remoteport = VIDRMPORT;
@@ -282,9 +382,9 @@ void StartTeleoperation () {
 
 	}
 
-	// UDP port initialization for operator-teleoperator haptic communication
+	///UDP port initialization for operator-teleoperator haptic communication
 	
-	// initialize the udp communication structure
+	///initialize the udp communication structure
 	TopSockPtr = new UDPSTRUCT;
 	TopSockPtr->localport = OPLOCPORT;
 	TopSockPtr->remoteport = TOPRMPORT;
@@ -300,9 +400,9 @@ void StartTeleoperation () {
 
 	}
 
-        // UDP port initialization for operator-teleoperator video communication
+        ///UDP port initialization for operator-teleoperator video communication
 
-	// initialize the udp communication structure
+	///initialize the udp communication structure
 	TopVidSockPtr = new UDPSTRUCT;
 	TopVidSockPtr->localport = OPVIDLOCPORT;
 	TopVidSockPtr->remoteport = TOPVIDRMPORT;
@@ -318,13 +418,13 @@ void StartTeleoperation () {
 
 	}
 
-	// initialize KUKA command data structure pointer 
+	///initialize KUKA command data structure pointer 
 	KUKACommandPtr = new ROBOTCOMMAND;
-	KUKACommandPtr->ControlType = 'V'; // this sets to velocity commanding
+	KUKACommandPtr->ControlType = 'V'; ///this sets to velocity commanding
 
-	// TODO Session initiation function shoul be called here
-	// the haptic device type, the communication delay measure and any necessary information share should be done before the session starts
-	if (SessionInitiation(TopSockPtr, VidSockPtr,KUKACommandPtr)) // this function was not implemented yet
+	///TODO Session initiation function shoul be called here
+	///the haptic device type, the communication delay measure and any necessary information share should be done before the session starts
+	if (SessionInitiation(TopSockPtr, VidSockPtr,KUKACommandPtr)) ///this function was not implemented yet
         {
 
 		cout << "Teleoperation session is successfully initialized " << endl;
@@ -336,17 +436,18 @@ void StartTeleoperation () {
 	}
 	
 
-	//! Timer callback initializations
+	///Timer callback initializations
 
-	// create a timer callback for haptics loop with a prespecified frequency
-	TimerHaptic = n->createTimer(ros::Duration(TimerPeriodHaptic), HapticsLoop);
-	// create a video listener
+	///create a timer callback for haptics loop with a prespecified frequency
+	//TimerHaptic = n->createTimer(ros::Duration(TimerPeriodHaptic), HapticsLoop);
+	
+	///create a video listener
 	TimerVideo  = n->createTimer(ros::Duration(TimerPeriodVideo), ListenVideo); 
-	// create a time listener
-//	TimerStamp  = n->createTimer(ros::Duration(TimerPeriodStamp), ListenTimeStamp);  
+	
+	///create a time listener
+	TimerStamp  = n->createTimer(ros::Duration(TimerPeriodStamp), ListenTimeStamp);  
 
-	// Start threads!
-
+	///Start threads!
  	ros::spin();
 
 } // end of Start teleoperation
@@ -354,11 +455,13 @@ void StartTeleoperation () {
 
 
 /************** StopTeleoperation() **************************/
+
+
 void StopTeleoperation () {
 
 	// TODO: Release the memory and close the connections and devices safely
 	
-	// close connection with haptic device
+	///close connection with haptic device
   	dhdClose ();
 	free(GripperWidthBuffer);
 	free(GripperSpeedBuffer);
@@ -367,14 +470,19 @@ void StopTeleoperation () {
 /*************************************************************/
 
 
-// haptic device initialization
+/**
+*	This function initializes the FD haptic device, detects its type and sets necessary flags
+*	@author Burak Cizmeci
+*	@param no need to give any input
+* 	@date 11/22/2012
+*/
 int InitHaptics () {
 
   if (dhdOpen () >= 0) {
     printf ("%s device detected\n", dhdGetSystemName());
 
    
-    // default config: 1 finger, no wrist, no gripper
+    ///default config: 1 finger, no wrist, no gripper
     FingerCount = 1;
     HasRot      = false;
     HasGrip     = false;
@@ -394,40 +502,61 @@ int InitHaptics () {
       HasRot = true;
       break;
     }
-  }
 
-  else {
-    printf ("no device detected\n");
-    dhdSleep (2.0);
-    exit (0);
-  }
+ ///Set the gravity compensation on the haptic device for safety reasons
+  dhdSetStandardGravity(9.81);
+  dhdSetGravityCompensation(DHD_ON,dhdGetDeviceID());
 
-  // 24.08.2012 Burak: Calibrate the device and position it to the center of the workspace
+
+  /* 24.08.2012 Burak: Calibrate the device and position it to the center of the workspace */
   printf("Calibrating the device ... \n");
 
-  // open the first available device
+  ///open the first available device
   if (drdOpen () < 0) {
     printf ("error: cannot open device (%s)\n", dhdErrorGetLastStr ());
     return -1;
   }
-	  // perform auto-initialization
+  ///perform auto-initialization
   if (drdAutoInit () < 0) {
     printf ("error: auto-initialization failed (%s)\n", dhdErrorGetLastStr ());
     return -1;
   }
 
-  // stop regulation (and leave force enabled)
+  ///stop regulation (and leave force enabled)
   drdStop (true);
+
+  // enable force
+  dhdEnableForce (DHD_ON);
+  dhdSetForceAndTorqueAndGripperTorque (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 
   printf("Calibration is done! \n");
 
   printf ("\n");
 
   return 0;
+
+
+
+  }
+
+  else {
+    printf ("no device detected\n");
+    dhdSleep (2.0);
+    //exit (0);
+    return 0;
+  }
+
+  
 }
 
 
 /************************* main() *****************************/
+/**
+*	This is the main function running the operator ros node
+*	@author Burak Cizmeci
+*	@param no need to give any input
+* 	@date 22/11/2012
+*/
 int main (int   argc, char **argv)
 {
   cout << endl;
@@ -437,18 +566,18 @@ int main (int   argc, char **argv)
   cout << "All Rights Reserved." << endl << endl;
 
 
-  // initialize haptic devices
+  ///initialize haptic devices
   InitHaptics ();
 
-  //initialize ROS
-     ros::init(argc, argv, "operator");
-     n = new ros::NodeHandle;
+  ///initialize ROS
+  ros::init(argc, argv, "operator");
+  n = new ros::NodeHandle;
 
-  // Start teleoperation
+  ///Start teleoperation
   StartTeleoperation ();
 
 
-  // Stop teleoperation
+  ///Stop teleoperation
   StopTeleoperation();
 	
    cout << "Terminating KUKA LWR Teleoperation! " << endl;
